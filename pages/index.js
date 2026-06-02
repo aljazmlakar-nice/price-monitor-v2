@@ -20,7 +20,9 @@ const emptyArticle = () => ({ name: '', ean: '', urls: {} });
 export default function Home() {
   const [articles, setArticles] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  const [editing, setEditing] = useState(null); // article being edited/added
+  const [editing, setEditing] = useState(null);
+  const [apiKey, setApiKey] = useState('');
+  const [showSettings, setShowSettings] = useState(false); // article being edited/added
   const [scraping, setScraping] = useState(false);
   const [results, setResults] = useState(null);
   const [activeArticleResults, setActiveArticleResults] = useState(null);
@@ -28,6 +30,8 @@ export default function Home() {
   const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
+    const savedKey = localStorage.getItem('pm_api_key');
+    if (savedKey) setApiKey(savedKey);
     const saved = localStorage.getItem('pm_articles');
     if (saved) setArticles(JSON.parse(saved));
   }, []);
@@ -80,7 +84,7 @@ export default function Home() {
       const resp = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: validUrls })
+        body: JSON.stringify({ urls: validUrls, productName: article.name, apiKey })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error);
@@ -120,8 +124,10 @@ export default function Home() {
           Olibetta <span style={{ color: '#7F77DD' }}>Price Monitor</span>
           <span style={{ fontSize: 11, background: '#EEEDFE', color: '#534AB7', padding: '2px 8px', borderRadius: 99, marginLeft: 10, fontWeight: 400 }}>v2 — Scraping</span>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
-          {view === 'list' && <button style={{ ...s.btn, ...s.btnPrimary }} onClick={startNew}>+ Nov artikel</button>}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, color: apiKey ? '#0F6E56' : '#993C1D', cursor: 'pointer', padding: '4px 10px', background: apiKey ? '#E1F5EE' : '#FAECE7', borderRadius: 99 }} onClick={() => setShowSettings(true)}>{apiKey ? '✓ API ključ' : '⚠ Nastavi API ključ'}</span>
+          <div>
+          {view === 'list' && <button style={{ ...s.btn, ...s.btnPrimary }} onClick={startNew}>+ Nov artikel</button>}</div>
           {view === 'edit' && <><button style={s.btn} onClick={() => setView('list')}>← Nazaj</button><button style={{ ...s.btn, ...s.btnPrimary }} onClick={saveEditing}>Shrani artikel</button></>}
           {view === 'results' && <><button style={s.btn} onClick={() => setView('list')}>← Nazaj</button><button style={{ ...s.btn, ...s.btnGreen }} onClick={downloadCSV} disabled={!results}>📥 CSV</button></>}
         </div>
@@ -245,7 +251,7 @@ export default function Home() {
                 <div style={s.card}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
-                      <tr>{['Trgovina', 'Cena', 'Razlika vs Olibetta AT', 'Na zalogi', 'Status'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+                      <tr>{['Trgovina', 'Cena', 'Dostava', 'Skupaj', 'Razlika vs Olibetta AT', 'Na zalogi', 'Status'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
                       {results.map((shop, i) => {
@@ -276,7 +282,9 @@ export default function Home() {
                               {isBest && ' 🏆'}
                               {shop.isOlibetta && ' 🐟'}
                             </td>
-                            <td style={s.td}>{shop.isOlibetta ? <span style={{ fontSize: 12, color: '#888' }}>referenca</span> : diffEl}</td>
+                            <td style={s.td}>{shop.isOlibetta ? '—' : (shop.shipping || <span style={{color:'#aaa',fontSize:12}}>iskanje...</span>)}</td>
+                              <td style={s.td}>{shop.total_num ? <span style={{fontWeight:600}}>{shop.total_num.toLocaleString('de-AT',{minimumFractionDigits:2})} €</span> : '—'}</td>
+                              <td style={s.td}>{shop.isOlibetta ? <span style={{ fontSize: 12, color: '#888' }}>referenca</span> : diffEl}</td>
                             <td style={s.td}>{availEl}</td>
                             <td style={{ ...s.td, fontSize: 12, color: shop.error ? '#993C1D' : '#aaa' }}>
                               {shop.error ? `⚠ ${shop.error}` : shop.price ? '✓ OK' : '— ni podatka'}
@@ -292,7 +300,31 @@ export default function Home() {
           </div>
         )}
       </div>
-    </div>
+    
+      {showSettings && (
+        <div style={s.overlay} onClick={() => setShowSettings(false)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>⚙ Nastavitve</h2>
+            <p style={{ fontSize: 13, color: '#666', marginBottom: 12, lineHeight: 1.5 }}>
+              Anthropic API ključ je potreben za iskanje cen dostave z AI.<br/>
+              Dobiti na <a href='https://console.anthropic.com' target='_blank' style={{color:'#534AB7'}}>console.anthropic.com</a>
+            </p>
+            <div style={s.field}>
+              <label style={s.label}>API ključ</label>
+              <input style={s.input} type='password' value={apiKey}
+                onChange={e => setApiKey(e.target.value)} placeholder='sk-ant-...' />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button style={s.btn} onClick={() => setShowSettings(false)}>Prekliči</button>
+              <button style={{ ...s.btn, ...s.btnPrimary }} onClick={() => {
+                localStorage.setItem('pm_api_key', apiKey);
+                setShowSettings(false);
+              }}>Shrani</button>
+            </div>
+          </div>
+        </div>
+      )}
+</div>
   );
 }
 
