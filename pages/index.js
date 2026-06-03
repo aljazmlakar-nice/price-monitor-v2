@@ -15,7 +15,7 @@ const SHOPS = [
   { key: 'koelle_de', label: '🇩🇪 Kölle Zoo DE', domain: 'koelle-zoo.de' },
 ];
 
-const emptyArticle = () => ({ name: '', ean: '', urls: {} });
+const emptyArticle = () => ({ name: '', ean: '', urls: {}, shippingRates: {} });
 
 export default function Home() {
   const [articles, setArticles] = useState([]);
@@ -84,7 +84,7 @@ export default function Home() {
       const resp = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: validUrls, productName: article.name, apiKey })
+        body: JSON.stringify({ urls: validUrls })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error);
