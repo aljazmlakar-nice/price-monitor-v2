@@ -1,84 +1,63 @@
 import { scrapeUrl, scrapeHornbachDirect, getShopName, isOlibetta } from '../../lib/scrapers';
 
-async function getShippingCost(shopName, productName, apiKey) {
-  if (!apiKey) return null;
+async function getAllShippingCosts(shops, productName, apiKey) {
+  if (!apiKey || !shops.length) return {};
+  const shopList = shops.filter(s => !s.isOlibetta && s.price_num).map(s => s.name).join(', ');
+  if (!shopList) return {};
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 200,
+        max_tokens: 500,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{
-          role: 'user',
-          content: `Koliko stane dostava za "${productName}" pri ${shopName}? To je velik artikel (akvarij ~60kg). Poišči trenutno ceno dostave na njihovi spletni strani. Vrni SAMO številko v evrih (npr. 49.99) ali 0 če je brezplačna. Nič drugega.`
-        }]
+        messages: [{ role: 'user', content: `Poišči cene dostave za velik artikel (akvarij ~60kg) pri: ${shopList}. Produkt: "${productName}". Vrni SAMO JSON brez markdown: {"Hornbach.at": 49.99, "Zooroyal.at": 0}. Vrednost 0 = brezplačno. SAMO JSON.` }]
       })
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) return {};
     const data = await resp.json();
     const text = data.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
-    const match = text.match(/[\d]+[,\.][\d]{0,2}/);
-    if (match) return parseFloat(match[0].replace(',', '.'));
-    return null;
-  } catch {
-    return null;
-  }
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    return {};
+  } catch { return {}; }
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
   const { urls, productName, apiKey } = req.body;
   if (!urls || !Object.keys(urls).length) return res.status(400).json({ error: 'Ni URL-jev' });
 
-  const results = await Promise.allSettled(
+  const scrapeResults = await Promise.allSettled(
     Object.entries(urls).map(async ([key, url]) => {
       if (!url || url.trim() === '') return { key, skipped: true };
       const cleanUrl = url.trim();
-      const isHornbach = cleanUrl.includes('hornbach.');
-      const data = isHornbach
-        ? await scrapeHornbachDirect(cleanUrl)
-        : await scrapeUrl(cleanUrl);
-
-      const shopName = getShopName(cleanUrl);
-      
-      // Get shipping cost via AI
-      let shipping = null;
-      if (apiKey && data.price_num && !isOlibetta(cleanUrl)) {
-        shipping = await getShippingCost(shopName, productName || 'akvarij', apiKey);
-      }
-
-      return {
-        key,
-        url: cleanUrl,
-        name: shopName,
-        isOlibetta: isOlibetta(cleanUrl),
-        shipping_num: shipping,
-        shipping: shipping !== null ? (shipping === 0 ? 'Brezplačno' : shipping.toLocaleString('de-AT', { minimumFractionDigits: 2 }) + ' €') : null,
-        total_num: data.price_num && shipping !== null ? data.price_num + shipping : null,
-        ...data
-      };
+      const data = cleanUrl.includes('hornbach.') ? await scrapeHornbachDirect(cleanUrl) : await scrapeUrl(cleanUrl);
+      return { key, url: cleanUrl, name: getShopName(cleanUrl), isOlibetta: isOlibetta(cleanUrl), ...data };
     })
   );
 
-  const shops = results
-    .filter(r => r.status === 'fulfilled' && !r.value.skipped)
-    .map(r => r.value)
-    .sort((a, b) => {
-      if (a.isOlibetta) return -1;
-      if (b.isOlibetta) return 1;
-      if (!a.price_num) return 1;
-      if (!b.price_num) return -1;
-      return (a.total_num || a.price_num) - (b.total_num || b.price_num);
-    });
+  const shops = scrapeResults.filter(r => r.status === 'fulfilled' && !r.value.skipped).map(r => r.value);
+  const shippingCosts = await getAllShippingCosts(shops, productName || '', apiKey);
 
-  return res.status(200).json({ shops });
+  const shopsWithShipping = shops.map(shop => {
+    const shippingNum = shippingCosts[shop.name] ?? null;
+    return {
+      ...shop,
+      shipping_num: shippingNum,
+      shipping: shippingNum === null ? null : shippingNum === 0 ? 'Brezplačno' : shippingNum.toLocaleString('de-AT', { minimumFractionDigits: 2 }) + ' €',
+      total_num: shop.price_num !== null && shippingNum !== null ? shop.price_num + shippingNum : null,
+    };
+  }).sort((a, b) => {
+    if (a.isOlibetta) return -1;
+    if (b.isOlibetta) return 1;
+    if (!a.price_num) return 1;
+    if (!b.price_num) return -1;
+    return (a.total_num ?? a.price_num) - (b.total_num ?? b.price_num);
+  });
+
+  return res.status(200).json({ shops: shopsWithShipping });
 }
 
-export const config = { api: { responseLimit: false, bodyParser: { sizeLimit: '1mb' } } };
+export const config = { api: { responseLimit: false } };
