@@ -2,7 +2,7 @@ import { scrapeUrl, scrapeHornbachDirect, getShopName, isOlibetta } from '../../
 
 async function getAllShippingCosts(shops, productName, apiKey) {
   if (!apiKey || !shops.length) return {};
-  const shopList = shops.filter(s => !s.isOlibetta && s.price_num).map(s => s.name).join(', ');
+  const shopList = shops.filter(s => s.price_num).map(s => s.name).join(', ');
   if (!shopList) return {};
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -12,7 +12,7 @@ async function getAllShippingCosts(shops, productName, apiKey) {
         model: 'claude-sonnet-4-5',
         max_tokens: 500,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: `Poišči cene dostave za velik artikel (akvarij ~60kg) pri: ${shopList}. Produkt: "${productName}". Vrni SAMO JSON brez markdown: {"Hornbach.at": 49.99, "Zooroyal.at": 0}. Vrednost 0 = brezplačno. SAMO JSON.` }]
+        messages: [{ role: 'user', content: `Poišči cene dostave za velik artikel (akvarij ~60kg) pri VSEH teh trgovinah vključno z Olibetta: ${shopList}. Produkt: "${productName}". Vrni SAMO JSON brez markdown, brez besedila: {"Hornbach.at": 49.99, "Zooroyal.at": 0, "Olibetta.at": 49.99}. Vrednost 0 = brezplačno. Ce ne najdes podatka za trgovino jo izpusti. SAMO JSON.` }]
       })
     });
     if (!resp.ok) return {};
@@ -22,6 +22,12 @@ async function getAllShippingCosts(shops, productName, apiKey) {
     if (match) return JSON.parse(match[0]);
     return {};
   } catch { return {}; }
+}
+
+function formatShipping(num) {
+  if (num === null) return null;
+  if (num === 0) return 'Brezplačno';
+  return num.toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
 
 export default async function handler(req, res) {
@@ -43,11 +49,13 @@ export default async function handler(req, res) {
 
   const shopsWithShipping = shops.map(shop => {
     const shippingNum = shippingCosts[shop.name] ?? null;
+    const totalNum = shop.price_num !== null && shippingNum !== null ? shop.price_num + shippingNum : null;
     return {
       ...shop,
       shipping_num: shippingNum,
-      shipping: shippingNum === null ? null : shippingNum === 0 ? 'Brezplačno' : shippingNum.toLocaleString('de-AT', { minimumFractionDigits: 2 }) + ' €',
-      total_num: shop.price_num !== null && shippingNum !== null ? shop.price_num + shippingNum : null,
+      shipping: formatShipping(shippingNum),
+      total_num: totalNum,
+      total: totalNum !== null ? totalNum.toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' : null,
     };
   }).sort((a, b) => {
     if (a.isOlibetta) return -1;
