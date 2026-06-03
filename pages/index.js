@@ -22,6 +22,8 @@ export default function Home() {
   const [activeId, setActiveId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [apiKey, setApiKey] = useState('');
+  const [scraperUrl, setScraperUrl] = useState('');
+  const [scraperKey, setScraperKey] = useState('');
   const [showSettings, setShowSettings] = useState(false); // article being edited/added
   const [scraping, setScraping] = useState(false);
   const [results, setResults] = useState(null);
@@ -32,6 +34,8 @@ export default function Home() {
   useEffect(() => {
     const savedKey = localStorage.getItem('pm_api_key');
     if (savedKey) setApiKey(savedKey);
+    const sUrl = localStorage.getItem('pm_scraper_url'); if (sUrl) setScraperUrl(sUrl);
+    const sKey = localStorage.getItem('pm_scraper_key'); if (sKey) setScraperKey(sKey);
     const saved = localStorage.getItem('pm_articles');
     if (saved) setArticles(JSON.parse(saved));
   }, []);
@@ -80,19 +84,54 @@ export default function Home() {
       Object.entries(article.urls).filter(([_, v]) => v && v.trim())
     );
 
+    if (!scraperUrl) { alert('Najprej nastavi Scraper URL v nastavitvah (⚙).'); setScraping(false); setView('list'); return; }
+
+    const fmt = (n) => n.toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    const getName = (url) => { try { const d = new URL(url).hostname.replace('www.',''); const p = d.split('.'); return p[0].charAt(0).toUpperCase()+p[0].slice(1)+'.'+p[p.length-1]; } catch { return url; } };
+    const isOli = (url) => { try { return new URL(url).hostname.includes('olibetta'); } catch { return false; } };
+
     try {
-      const resp = await fetch('/api/scrape', {
+      // Call Render scraper DIRECTLY from browser (avoids Vercel 10s timeout)
+      const resp = await fetch(`${scraperUrl.replace(/\/$/, '')}/scrape-many`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-scraper-key': scraperKey || '' },
         body: JSON.stringify({ urls: validUrls })
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error);
-      setResults(data.shops);
+      if (!resp.ok) {
+        const e = await resp.json().catch(() => ({}));
+        throw new Error(e.error || `Scraper HTTP ${resp.status}`);
+      }
+      const { results: raw } = await resp.json();
+
+      const shops = Object.entries(raw).map(([key, data]) => {
+        const url = validUrls[key];
+        const shippingNum = data.shipping_num ?? null;
+        const totalNum = data.price_num != null && shippingNum != null ? data.price_num + shippingNum : null;
+        return {
+          key, url, name: getName(url), isOlibetta: isOli(url),
+          price_num: data.price_num ?? null,
+          price: data.price_num != null ? fmt(data.price_num) : null,
+          currency: '€',
+          available: data.available ?? null,
+          shipping_num: shippingNum,
+          shipping: shippingNum == null ? null : shippingNum === 0 ? 'Brezplačno' : fmt(shippingNum),
+          total_num: totalNum,
+          total: totalNum != null ? fmt(totalNum) : null,
+          error: data.error || null,
+        };
+      }).sort((a, b) => {
+        if (a.isOlibetta) return -1;
+        if (b.isOlibetta) return 1;
+        if (!a.price_num) return 1;
+        if (!b.price_num) return -1;
+        return (a.total_num ?? a.price_num) - (b.total_num ?? b.price_num);
+      });
+
+      setResults(shops);
       setActiveArticleResults(article);
       setLastUpdated(new Date().toLocaleString('sl-SI'));
     } catch (err) {
-      alert('Napaka: ' + err.message);
+      alert('Napaka: ' + err.message + '\n\nNamig: prvi klic traja ~1 min (Render se prebuja). Poskusi znova.');
     }
     setScraping(false);
   };
@@ -125,7 +164,7 @@ export default function Home() {
           <span style={{ fontSize: 11, background: '#EEEDFE', color: '#534AB7', padding: '2px 8px', borderRadius: 99, marginLeft: 10, fontWeight: 400 }}>v2 — Scraping</span>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 12, color: apiKey ? '#0F6E56' : '#993C1D', cursor: 'pointer', padding: '4px 10px', background: apiKey ? '#E1F5EE' : '#FAECE7', borderRadius: 99 }} onClick={() => setShowSettings(true)}>{apiKey ? '✓ API ključ' : '⚠ Nastavi API ključ'}</span>
+          <span style={{ fontSize: 12, color: scraperUrl ? '#0F6E56' : '#993C1D', cursor: 'pointer', padding: '4px 10px', background: scraperUrl ? '#E1F5EE' : '#FAECE7', borderRadius: 99 }} onClick={() => setShowSettings(true)}>{scraperUrl ? '✓ Scraper' : '⚠ Nastavi Scraper'}</span>
           <div>
           {view === 'list' && <button style={{ ...s.btn, ...s.btnPrimary }} onClick={startNew}>+ Nov artikel</button>}</div>
           {view === 'edit' && <><button style={s.btn} onClick={() => setView('list')}>← Nazaj</button><button style={{ ...s.btn, ...s.btnPrimary }} onClick={saveEditing}>Shrani artikel</button></>}
@@ -304,20 +343,22 @@ export default function Home() {
       {showSettings && (
         <div style={s.overlay} onClick={() => setShowSettings(false)}>
           <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>⚙ Nastavitve</h2>
-            <p style={{ fontSize: 13, color: '#666', marginBottom: 12, lineHeight: 1.5 }}>
-              Anthropic API ključ je potreben za iskanje cen dostave z AI.<br/>
-              Dobiti na <a href='https://console.anthropic.com' target='_blank' style={{color:'#534AB7'}}>console.anthropic.com</a>
-            </p>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>⚙ Nastavitve</h2>
             <div style={s.field}>
-              <label style={s.label}>API ključ</label>
-              <input style={s.input} type='password' value={apiKey}
-                onChange={e => setApiKey(e.target.value)} placeholder='sk-ant-...' />
+              <label style={s.label}>Scraper URL (Render)</label>
+              <input style={s.input} value={scraperUrl}
+                onChange={e => setScraperUrl(e.target.value)} placeholder='https://price-scraper-xxxx.onrender.com' />
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Scraper ključ</label>
+              <input style={s.input} type='password' value={scraperKey}
+                onChange={e => setScraperKey(e.target.value)} placeholder='skrivni ključ' />
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button style={s.btn} onClick={() => setShowSettings(false)}>Prekliči</button>
               <button style={{ ...s.btn, ...s.btnPrimary }} onClick={() => {
-                localStorage.setItem('pm_api_key', apiKey);
+                localStorage.setItem('pm_scraper_url', scraperUrl);
+                localStorage.setItem('pm_scraper_key', scraperKey);
                 setShowSettings(false);
               }}>Shrani</button>
             </div>
