@@ -282,7 +282,7 @@ export default function Home() {
                               {isBest && ' 🏆'}
                               {shop.isOlibetta && ' 🐟'}
                             </td>
-                            <td style={s.td}>{shop.isOlibetta ? '—' : (shop.shipping || <span style={{color:'#aaa',fontSize:12}}>iskanje...</span>)}</td>
+                            <td style={s.td}>{shop.shipping || <span style={{color:'#aaa',fontSize:12}}>?</span>}</td>
                               <td style={s.td}>{shop.total_num ? <span style={{fontWeight:600}}>{shop.total_num.toLocaleString('de-AT',{minimumFractionDigits:2})} €</span> : '—'}</td>
                               <td style={s.td}>{shop.isOlibetta ? <span style={{ fontSize: 12, color: '#888' }}>referenca</span> : diffEl}</td>
                             <td style={s.td}>{availEl}</td>
